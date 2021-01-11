@@ -1,4 +1,4 @@
-APP_NAME = toolkit
+APP_NAME = release
 BUILD_PATH = /tmp/${APP_NAME}
 EPOCH_TIME = $(shell date +%s)
 GIT_COMMIT = $(shell git rev-parse --short HEAD)
@@ -21,3 +21,12 @@ build:
 install: build
 	sudo mv $(BUILD_PATH) /usr/local/bin/
 	sudo chmod +x /usr/local/bin/${APP_NAME}
+
+## release: release to github
+release: check-version-included build
+	release clintjedwards/release ${version} -b $(BUILD_PATH)
+
+check-version-included:
+ifndef version
+	$(error version is undefined; ex. make release version=1.0.0)
+endif
