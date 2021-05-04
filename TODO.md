@@ -3,3 +3,4 @@
 - deploy should have a skip download/upload command
 - for release separate a library release from a binary release more distinctly
 - Provide example commands below the usage statement
+- conventional commits and auto commit bumping

@@ -4,14 +4,11 @@ go 1.13
 
 require (
 	github.com/Masterminds/semver v1.4.2
-	github.com/fatih/color v1.10.0 // indirect
+	github.com/clintjedwards/polyfmt v0.1.0
 	github.com/golang/protobuf v1.3.2 // indirect
-	github.com/google/go-cmp v0.3.1 // indirect
 	github.com/google/go-github v17.0.0+incompatible
 	github.com/google/go-querystring v1.0.0 // indirect
-	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/cobra v0.0.5
 	github.com/theckman/yacspin v0.8.0
 	golang.org/x/net v0.0.0-20190620200207-3b0461eec859 // indirect

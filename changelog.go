@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/theckman/yacspin"
+	"github.com/clintjedwards/polyfmt"
 )
 
 const editorEnvVar string = "EDITOR"
@@ -98,8 +98,8 @@ func getContentsFromUser(filePath string) ([]byte, error) {
 }
 
 // handleChangelog opens a pre-populated file for editing and returns the final user contents
-func handleChangelog(name, version, date string, spinner *yacspin.Spinner) ([]byte, error) {
-	spinner.Message("Creating changelog")
+func handleChangelog(name, version, date string, fmtter polyfmt.Formatter) ([]byte, error) {
+	fmtter.Print("Creating changelog")
 
 	prefix := "changelog"
 	suffix := "md" // markdown
@@ -108,7 +108,7 @@ func handleChangelog(name, version, date string, spinner *yacspin.Spinner) ([]by
 	// attempt to recover a changelog file
 	_, err := os.Stat(filePath)
 	if err == nil {
-		spinner.Message(fmt.Sprintf("Recovered previous changelog (%s)", filePath))
+		fmtter.Println(fmt.Sprintf("Recovered previous changelog (%s)", filePath))
 		return getContentsFromUser(filePath)
 	}
 
@@ -137,7 +137,7 @@ func handleChangelog(name, version, date string, spinner *yacspin.Spinner) ([]by
 		return nil, err
 	}
 
-	spinner.Message("Waiting for user input")
+	fmtter.Print("Waiting for user input")
 	return getContentsFromUser(filePath)
 }
 
