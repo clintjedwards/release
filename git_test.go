@@ -97,7 +97,6 @@ func TestParseCommitToInfo(t *testing.T) {
 			if result.kind != tc.expected.kind {
 				t.Errorf("parsing failure for message %q; unexpected kind; want %q; got %q", tc.commit.Message, tc.expected.kind, result.kind)
 			}
-
 		})
 	}
 }

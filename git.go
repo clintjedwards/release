@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
-	"time"
 
+	"github.com/Masterminds/semver"
+	"github.com/go-git/go-git/plumbing/storer"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -77,74 +79,67 @@ func parseCommitToInfo(commit *object.Commit) (commitInfo, error) {
 	}, nil
 }
 
-func getAllCommitsSinceRelease() ([]*object.Commit, error) {
-	repo, err := git.PlainOpen("./")
+func getCommitsAfterLatestTag(repo *git.Repository) (*plumbing.Reference, []*object.Commit, error) {
+	// Get all the tags
+	tagRefs, err := repo.Tags()
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("could not retrieve tags: %w", err)
 	}
 
-	_, commit, err := getLatestTagFromRepository(repo)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add a nanosecond so we don't include the commit within the returned results
-	since := commit.Author.When.Add(1 * time.Nanosecond)
-
-	commits, err := repo.Log(&git.LogOptions{
-		Since: &since,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	commitList := []*object.Commit{}
-	err = commits.ForEach(func(c *object.Commit) error {
-		commitList = append(commitList, c)
+	// Store all tags in a slice
+	var tags []*plumbing.Reference
+	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
+		if _, err := semver.NewVersion(t.Name().Short()); err == nil {
+			tags = append(tags, t)
+		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("could not iterate over tags")
 	}
 
-	return commitList, nil
-}
+	// If there are no tags, return nil for latestTag and an empty commits list
+	if len(tags) == 0 {
+		return nil, []*object.Commit{}, nil
+	}
 
-func getLatestTagFromRepository(repository *git.Repository) (*plumbing.Reference, *object.Commit, error) {
-	tagRefs, err := repository.Tags()
+	// Sort the tags by SemVer
+	sort.Slice(tags, func(i, j int) bool {
+		v1, _ := semver.NewVersion(tags[i].Name().Short())
+		v2, _ := semver.NewVersion(tags[j].Name().Short())
+		return v1.LessThan(v2)
+	})
+
+	// Get the latest tag
+	latestTag := tags[len(tags)-1]
+
+	// Get all commits
+	cIter, err := repo.Log(&git.LogOptions{})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("could not retrieve commits: %w", err)
 	}
 
-	var latestTagCommit *object.Commit
-	var latestTagName *plumbing.Reference
-	err = tagRefs.ForEach(func(tagRef *plumbing.Reference) error {
-		revision := plumbing.Revision(tagRef.Name().String())
-		tagCommitHash, err := repository.ResolveRevision(revision)
-		if err != nil {
-			return err
+	var commits []*object.Commit
+	found := false
+
+	// Get all commits after the latest tag
+	err = cIter.ForEach(func(c *object.Commit) error {
+		if c.Hash.String() == latestTag.Hash().String() {
+			found = true
+			return storer.ErrStop
 		}
 
-		commit, err := repository.CommitObject(*tagCommitHash)
-		if err != nil {
-			return err
-		}
-
-		if latestTagCommit == nil {
-			latestTagCommit = commit
-			latestTagName = tagRef
-		}
-
-		if commit.Committer.When.After(latestTagCommit.Committer.When) {
-			latestTagCommit = commit
-			latestTagName = tagRef
-		}
-
+		commits = append(commits, c)
 		return nil
 	})
-	if err != nil {
-		return nil, nil, err
+
+	if err != nil && err != storer.ErrStop {
+		return nil, nil, fmt.Errorf("error iterating through commits: %w", err)
 	}
 
-	return latestTagName, latestTagCommit, nil
+	if !found {
+		return nil, nil, fmt.Errorf("latest tag not found in commit history")
+	}
+
+	return latestTag, commits, nil
 }

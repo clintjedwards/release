@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +15,11 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const tokenEnv string = "GITHUB_TOKEN"
-const tokenFileName string = ".github_token"
-const dateFmt string = "%s %d, %d"
+const (
+	tokenEnv      string = "GITHUB_TOKEN"
+	tokenFileName string = ".github_token"
+	dateFmt       string = "%s %d, %d"
+)
 
 // Release contains information pertaining to a specific github release
 type Release struct {
@@ -142,7 +143,7 @@ func getGithubToken(tokenFile string) (token string, err error) {
 }
 
 func setGithubTokenFromFile(filename string) ([]byte, error) {
-	contents, err := ioutil.ReadFile(filename)
+	contents, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("could not find github token: %s; %w", filename, err)
 	}

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -12,15 +11,24 @@ import (
 	"github.com/clintjedwards/polyfmt"
 )
 
-const editorEnvVar string = "EDITOR"
-const visualEnvVar string = "VISUAL"
-const defaultEditor string = "vi"
-const filePathFmt string = "/tmp/%s_%s_%s.%s" // ex. /tmp/changelog_test_1.0.2
+const (
+	editorEnvVar  string = "EDITOR"
+	visualEnvVar  string = "VISUAL"
+	defaultEditor string = "vi"
+	filePathFmt   string = "/tmp/%s_%s_%s.%s" // ex. /tmp/changelog_test_1.0.2
+)
 
 // pretext is the placeholder text for the input file
 const pretext = `// New release for {{.Name}} v{{.Version}}
+//
 // All lines starting with '//' will be excluded from final changelog
-// Insert changelog below this comment. An example format has been given:
+//
+// Commits since latest tag:
+{{- range .LastCommits}}
+// * {{ . }}
+{{- end}}
+//
+// Edit changelog below this comment. An example format has been given:
 
 ## v{{.Version}} ({{.Date}})
 
@@ -42,7 +50,6 @@ BUG FIXES:
 // returns an editor binary and argument string
 // ex. /usr/bin/vscode --wait
 func getEditorPath() (string, error) {
-
 	var editorPath string
 
 	editorPath = os.Getenv(visualEnvVar)
@@ -88,7 +95,7 @@ func getContentsFromUser(filePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	bytes, err := ioutil.ReadFile(filePath)
+	bytes, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +105,7 @@ func getContentsFromUser(filePath string) ([]byte, error) {
 }
 
 // handleChangelog opens a pre-populated file for editing and returns the final user contents
-func handleChangelog(name, version, date string, fmtter polyfmt.Formatter) ([]byte, error) {
+func handleChangelog(name, version, date string, commits []string, fmtter polyfmt.Formatter) ([]byte, error) {
 	fmtter.Print("Creating changelog")
 
 	prefix := "changelog"
@@ -120,13 +127,15 @@ func handleChangelog(name, version, date string, fmtter polyfmt.Formatter) ([]by
 
 	tmpl := template.Must(template.New("").Parse(pretext))
 	err = tmpl.Execute(file, struct {
-		Name    string
-		Version string
-		Date    string
+		Name        string
+		Version     string
+		Date        string
+		LastCommits []string
 	}{
-		Name:    name,
-		Version: version,
-		Date:    date,
+		Name:        name,
+		Version:     version,
+		Date:        date,
+		LastCommits: commits,
 	})
 	if err != nil {
 		return nil, err
@@ -142,7 +151,6 @@ func handleChangelog(name, version, date string, fmtter polyfmt.Formatter) ([]by
 }
 
 func removeFileComments(data []byte) []byte {
-
 	var newFile [][]byte
 	lines := bytes.Split(data, []byte("\n"))
 
