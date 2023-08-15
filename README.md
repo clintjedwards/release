@@ -1,1 +1,8 @@
-A simple tool for releasing via github, follows [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/#summary) to allow for brainless version bumping.
+# Release
+
+## A very simple internal Github release tool.
+
+Mostly does two things I found tedious:
+
+1. Creates tagged releases with option to upload assets.
+2. Helps create changelogs.
