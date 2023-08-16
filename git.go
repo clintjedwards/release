@@ -143,3 +143,8 @@ func getCommitsAfterLatestTag(repo *git.Repository) (*plumbing.Reference, []*obj
 
 	return latestTag, commits, nil
 }
+
+func getSemverFromTag(ref *plumbing.Reference) string {
+	index := strings.LastIndex(ref.String(), "/")
+	return ref.String()[index+1:]
+}

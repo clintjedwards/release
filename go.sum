@@ -16,8 +16,8 @@ github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be h1:9AeTilPcZAjCFI
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkYZB8zMSxRWpUBQtwG5a7fFgvEO+odwuTv2gs=
 github.com/bwesterb/go-ristretto v1.2.3/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
-github.com/clintjedwards/polyfmt v1.0.0 h1:ri4E8mhT5JhpXeJGOEXsdfKRPmZsecAvF1u/Tch9YAg=
-github.com/clintjedwards/polyfmt v1.0.0/go.mod h1:aaJOkbQzo+o39HB0kxZUyX76YTMoxAd7YU1Jl51vL7E=
+github.com/clintjedwards/polyfmt/v2 v2.0.0 h1:U5pLjfjO5f/VAbuvDH2P5T8w3iDrmysNNKDtxap6JD4=
+github.com/clintjedwards/polyfmt/v2 v2.0.0/go.mod h1:9QosmpBedfh2BSg+ofIn8xyB8CoAskZM4sF9J2UdhZw=
 github.com/cloudflare/circl v1.3.3 h1:fE/Qz0QdIGqeWfnwq0RE0R7MI51s0M2E4Ga9kq5AEMs=
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cpuguy83/go-md2man/v2 v2.0.2/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=

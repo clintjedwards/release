@@ -5,18 +5,20 @@ import (
 	"os"
 	"strings"
 
-	"github.com/clintjedwards/polyfmt"
+	"github.com/Masterminds/semver"
+	"github.com/clintjedwards/polyfmt/v2"
 	"github.com/go-git/go-git/plumbing"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/spf13/cobra"
 )
 
-// rootCmd is the base command for the basecoat cli
+// rootCmd represents the base of the CLI command chain. It configures the CLI but also
+// provides the interface for the main command which is simply 'release'.
 var rootCmd = &cobra.Command{
-	Use:   "release <version>",
+	Use:   "release",
 	Short: "Helper for simple github releases",
-	RunE:  runRootCmd,
+	RunE:  release,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		// Including these in the pre run hook instead of in the enclosing command definition
 		// allows cobra to still print errors and usage for its own cli verifications, but
@@ -25,63 +27,122 @@ var rootCmd = &cobra.Command{
 		cmd.SilenceErrors = true // Let us handle error printing ourselves
 		return nil
 	},
-	Args: cobra.ExactArgs(1),
-	Example: `$ release 0.0.5
-$ release 0.0.2 -b /tmp/some_binary`,
+	Example: `$ release
+$ release -v 0.0.4
+$ release -v 0.0.2 -b /tmp/some_binary`,
 }
 
-// First we need to open a file where user can set the semver, changelog contents,
-// then we can insert that changelog contents into the source files before we call make to build
-func runRootCmd(cmd *cobra.Command, args []string) error {
+func release(cmd *cobra.Command, _ []string) error {
+	// Initiate flags
 	format, err := cmd.Flags().GetString("format")
 	if err != nil {
 		return err
 	}
 
+	version, _ := cmd.Flags().GetString("version")
+	binaries, _ := cmd.Flags().GetStringArray("binary")
+
+	// Init formatter
 	pfmt, err := polyfmt.NewFormatter(polyfmt.Mode(format), polyfmt.DefaultOptions())
 	if err != nil {
 		return err
 	}
 	defer pfmt.Finish()
 
-	repoRaw, err := git.PlainOpen(".")
+	repository, err := git.PlainOpen(".")
 	if err != nil {
-		pfmt.PrintErr(fmt.Sprintf("%v", err))
+		pfmt.Err(fmt.Sprintf("Could not open local repository; make sure to run release from inside"+
+			"the repository you mean to create a release for; %v", err))
 		return err
 	}
 
-	repository, err := getRepoName(repoRaw)
+	repoName, err := getRepoName(repository)
 	if err != nil {
-		pfmt.PrintErr(fmt.Sprintf("%v", err))
+		pfmt.Err(fmt.Sprintf("Could not parse repository name; %v", err))
 		return err
 	}
 
-	version := args[0]
-	binaries, _ := cmd.Flags().GetStringArray("binary")
-
-	pfmt.Println(fmt.Sprintf("Releasing v%s of %s", version, repository))
-
-	newRelease, err := newRelease(version, repository)
+	latestTag, commits, err := getCommitsAfterLatestTag(repository)
 	if err != nil {
-		pfmt.PrintErr(fmt.Sprintf("%v", err))
+		pfmt.Err(fmt.Sprintf("Could not find any previous releases; %v", err))
+	}
+
+	// If the user hasn't actually set the version flag then we need to determine what it is.
+	// We do this by prompting the user for the version, but before doing that taking a best
+	// guess on what it might be if we were able to glean a previous version from the proceeding
+	// command.
+	if !cmd.Flag("version").Changed || version == "" {
+		latestVersion := ""
+		possibleNextVersion := ""
+
+		if latestTag != nil {
+			latestVersion = getSemverFromTag(latestTag)
+
+			// This should never fail, since we run the same command on the latestTag in the previous
+			// function.
+			latestSemver, _ := semver.NewVersion(latestVersion)
+			*latestSemver = latestSemver.IncMinor()
+			possibleNextVersion = latestSemver.String()
+		}
+
+		if latestVersion != "" {
+			pfmt.Println(fmt.Sprintf("The latest version found is %q", latestVersion))
+		}
+
+		for {
+			question := "What should the next version be? "
+
+			if possibleNextVersion != "" {
+				question += fmt.Sprintf("[default %q]: ", possibleNextVersion)
+			}
+
+			response := pfmt.Question(question)
+
+			// If the user has entered anything we take that.
+			if response != "" {
+				_, err := semver.NewVersion(response)
+				if err != nil {
+					pfmt.Err(fmt.Sprintf("Couldn't parse version %q; %v", response, err))
+					continue
+				}
+
+				version = response
+
+				break
+			}
+
+			// If the user has entered nothing, but we have a default, just
+			// use that default.
+			if response == "" && possibleNextVersion != "" {
+				version = possibleNextVersion
+				break
+			}
+
+			// If the user has entered nothing and we don't have a default
+			// then we simply re-prompt the user.
+			if response == "" && possibleNextVersion == "" {
+				continue
+			}
+		}
+	}
+
+	newRelease, err := newRelease(version, repoName)
+	if err != nil {
+		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
 	}
 
-	_, commitsRaw, err := getCommitsAfterLatestTag(repoRaw)
-	if err != nil {
-		pfmt.PrintErr(fmt.Sprintf("%v", err))
-		return err
-	}
+	pfmt.Println(fmt.Sprintf("Releasing v%s of %s", version, repoName))
 
-	commits := []string{}
-	for _, commit := range commitsRaw {
+	commitStrs := []string{}
+	for _, commit := range commits {
 		message := fmt.Sprintf("%s: %s", getAbbreviatedHash(plumbing.Hash(commit.Hash)), getShortMessage(commit))
-		commits = append(commits, message)
+		commitStrs = append(commitStrs, message)
 	}
 
-	cl, err := handleChangelog(newRelease.ProjectName, newRelease.Version, newRelease.Date, commits, pfmt)
+	cl, err := handleChangelog(newRelease.ProjectName, newRelease.Version, newRelease.Date, commitStrs, pfmt)
 	if err != nil {
-		pfmt.PrintErr(fmt.Sprintf("%v", err))
+		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
 	}
 
@@ -90,11 +151,11 @@ func runRootCmd(cmd *cobra.Command, args []string) error {
 	tokenFile, _ := cmd.Flags().GetString("tokenFile")
 	err = newRelease.createGithubRelease(tokenFile, binaries...)
 	if err != nil {
-		pfmt.PrintErr(fmt.Sprintf("%v", err))
+		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
 	}
 
-	pfmt.PrintSuccess("Finished release!")
+	pfmt.Success("Finished release!")
 	return nil
 }
 
@@ -134,6 +195,7 @@ func getRepoName(repo *git.Repository) (string, error) {
 }
 
 func main() {
+	rootCmd.Flags().StringP("version", "v", "", "The semver version string of the new release; If this is not included release will prompt for it.")
 	rootCmd.Flags().StringP("token_file", "t", "", "github api key file (default is $HOME/.github_token)")
 	rootCmd.Flags().StringArrayP("binary", "b", []string{}, "binaries to upload")
 	rootCmd.PersistentFlags().StringP("format", "f", "pretty", "output format; accepted values are 'pretty', 'json', 'silent'")

@@ -1,10 +1,10 @@
-module github.com/clintjedwards/toolkit
+module github.com/clintjedwards/release
 
 go 1.20
 
 require (
 	github.com/Masterminds/semver v1.5.0
-	github.com/clintjedwards/polyfmt v1.0.0
+	github.com/clintjedwards/polyfmt/v2 v2.0.0
 	github.com/go-git/go-git v4.7.0+incompatible
 	github.com/go-git/go-git/v5 v5.8.1
 	github.com/google/go-github v17.0.0+incompatible

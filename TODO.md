@@ -1,2 +1,3 @@
 - dry run flag
 - if user doesn't provide version we should lookup which one was the last and prompt user to enter new one
+- We should make it have a configuration file so we can store specific settings we want.

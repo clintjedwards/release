@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/clintjedwards/polyfmt"
+	"github.com/clintjedwards/polyfmt/v2"
 )
 
 const (
