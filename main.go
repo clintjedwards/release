@@ -35,8 +35,8 @@ Tool will confirm before pushing any changes.`,
 		return nil
 	},
 	Example: `$ release
-$ release -v 0.0.4
-$ release -v 0.0.2 -a '/tmp/some_binary'
+$ release -s 0.0.4
+$ release -s 0.0.2 -a '/tmp/some_binary'
 $ release -a '/tmp/*.glob_of_binaries'`,
 }
 
@@ -275,6 +275,11 @@ func resolveFilePaths(assetPaths []string) map[string]error {
 		}
 
 		for _, filePath := range filePaths {
+			if !fileExists(filePath) {
+				concreteAssetPaths[filePath] = fmt.Errorf("could not find asset %q", filePath)
+				continue
+			}
+
 			concreteAssetPaths[filePath] = nil
 		}
 	}
@@ -311,7 +316,7 @@ func getOrgAndRepo(repo *git.Repository) (string, error) {
 }
 
 func main() {
-	rootCmd.Flags().StringP("version", "v", "", "The semver version string of the new release; If this is not included release will prompt for it.")
+	rootCmd.Flags().StringP("semver", "s", "", "The semver version string of the new release; If this is not included release will prompt for it.")
 	rootCmd.Flags().StringP("token_file", "t", "", "Github api key file (default is $HOME/.github_token)")
 	rootCmd.Flags().StringArrayP("asset", "a", []string{}, "Assets to upload; This is usually the binary of "+
 		"the software or anything else that needs to be attached to the release."+
