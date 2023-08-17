@@ -1,32 +1,55 @@
-APP_NAME = release
-BUILD_PATH = /tmp/${APP_NAME}
-EPOCH_TIME = $(shell date +%s)
-GIT_COMMIT = $(shell git rev-parse --short HEAD)
-SEMVER = 0.0.1
-SHELL = /bin/bash
-VERSION = ${SEMVER}_${EPOCH_TIME}_${GIT_COMMIT}
+# Make settings
+# Mostly copied from: https://tech.davis-hansson.com/p/make/
 
+# Use Bash
+SHELL := bash
+
+# If one of the commands fails just fail properly and don't run the other commands.
+.SHELLFLAGS := -eu -o pipefail -c
+
+# Allows me to use a single shell session so you can do things like 'cd' without doing hacks.
+.ONESHELL:
+
+# Tells make not to do crazy shit.
+MAKEFLAGS += --no-builtin-rules
+
+# Allows me to replace tabs with > characters. This makes the things a bit easier to use things like forloops in bash.
+ifeq ($(origin .RECIPEPREFIX), undefined)
+  $(error This Make does not support .RECIPEPREFIX. Please use GNU Make 4.0 or later)
+endif
+.RECIPEPREFIX = >
+
+# App Vars
+
+APP_NAME = release
+GIT_COMMIT = $(shell git rev-parse --short HEAD)
+# Although go 1.18 has the git info baked into the binary now it still seems like there is no support
+# For including outside variables except this. So keep it for now.
+GO_LDFLAGS = '-X "github.com/clintjedwards/${APP_NAME}/main.appVersion=$(VERSION)"'
+SHELL = /bin/bash
+SEMVER = 0.0.0
+VERSION = ${SEMVER}_${GIT_COMMIT}
+
+## build: run tests and compile application
+build: check-path-included check-semver-included
+> go test ./... -race
+> go mod tidy
+> export CGO_ENABLED=0
+> go build -ldflags $(GO_LDFLAGS) -o $(OUTPUT)
+.PHONY: build
 
 ## help: prints this help message
 help:
-	@echo "Usage: "
-	@sed -n 's/^##//p' ${MAKEFILE_LIST} | column -t -s ':' |  sed -e 's/^/ /'
+> @echo "Usage: "
+> @sed -n 's/^##//p' ${MAKEFILE_LIST} | column -t -s ':' |  sed -e 's/^/ /'
+.PHONY: help
 
-## build: run tests and compile full app
-build:
-	go mod tidy
-	go build -o $(BUILD_PATH)
+check-path-included:
+ifndef OUTPUT
+>	$(error OUTPUT is undefined; ex. OUTPUT=/tmp/${APP_NAME})
+endif
 
-## install: build application and install on system
-install: build
-	sudo mv $(BUILD_PATH) /usr/local/bin/
-	sudo chmod +x /usr/local/bin/${APP_NAME}
-
-## release: release to github
-release: check-version-included build
-	release clintjedwards/release ${version} -b $(BUILD_PATH)
-
-check-version-included:
-ifndef version
-	$(error version is undefined; ex. make release version=1.0.0)
+check-semver-included:
+ifeq ($(SEMVER), 0.0.0)
+>	$(error SEMVER is undefined; ex. SEMVER=0.0.1)
 endif

@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var appVersion = "0.0.dev_000000"
+
 // rootCmd represents the base of the CLI command chain. It configures the CLI but also
 // provides the interface for the main command which is simply 'release'.
 var rootCmd = &cobra.Command{
@@ -25,7 +27,8 @@ var rootCmd = &cobra.Command{
 	Long: `Helper for simple github releases.
 
 Tool will confirm before pushing any changes.`,
-	RunE: release,
+	Version: " ", // We leave this added but empty so that the rootcmd will supply the -v flag
+	RunE:    release,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		// Including these in the pre run hook instead of in the enclosing command definition
 		// allows cobra to still print errors and usage for its own cli verifications, but
@@ -315,7 +318,16 @@ func getOrgAndRepo(repo *git.Repository) (string, error) {
 	return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
 }
 
+func humanizeVersion(version string) string {
+	semver, hash, err := strings.Cut(version, "_")
+	if !err {
+		return ""
+	}
+	return fmt.Sprintf("release %s [%s]\n", semver, hash)
+}
+
 func main() {
+	rootCmd.SetVersionTemplate(humanizeVersion(appVersion))
 	rootCmd.Flags().StringP("semver", "s", "", "The semver version string of the new release; If this is not included release will prompt for it.")
 	rootCmd.Flags().StringP("token_file", "t", "", "Github api key file (default is $HOME/.github_token)")
 	rootCmd.Flags().StringArrayP("asset", "a", []string{}, "Assets to upload; This is usually the binary of "+
