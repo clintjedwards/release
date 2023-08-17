@@ -7,6 +7,7 @@ import (
 
 	"github.com/Masterminds/semver"
 	"github.com/clintjedwards/polyfmt/v2"
+	"github.com/fatih/color"
 	"github.com/go-git/go-git/plumbing"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -18,7 +19,10 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "release",
 	Short: "Helper for simple github releases",
-	RunE:  release,
+	Long: `Helper for simple github releases.
+
+Tool will confirm before pushing any changes.`,
+	RunE: release,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		// Including these in the pre run hook instead of in the enclosing command definition
 		// allows cobra to still print errors and usage for its own cli verifications, but
@@ -39,8 +43,19 @@ func release(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	version, _ := cmd.Flags().GetString("version")
-	binaries, _ := cmd.Flags().GetStringArray("binary")
+	// We panic here since the only way these flags can fail is if the code is incorrect.
+	version, err := cmd.Flags().GetString("version")
+	if err != nil {
+		panic(err)
+	}
+	binaries, err := cmd.Flags().GetStringArray("binary")
+	if err != nil {
+		panic(err)
+	}
+	tokenFile, err := cmd.Flags().GetString("token_file")
+	if err != nil {
+		panic(err)
+	}
 
 	// Init formatter
 	pfmt, err := polyfmt.NewFormatter(polyfmt.Mode(format), polyfmt.DefaultOptions())
@@ -56,7 +71,7 @@ func release(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	repoName, err := getRepoName(repository)
+	orgAndRepo, err := getOrgAndRepo(repository)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("Could not parse repository name; %v", err))
 		return err
@@ -126,13 +141,13 @@ func release(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	newRelease, err := newRelease(version, repoName)
+	newRelease, err := newRelease(version, orgAndRepo)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
 	}
 
-	pfmt.Println(fmt.Sprintf("Releasing v%s of %s", version, repoName))
+	pfmt.Println(fmt.Sprintf("\nReleasing %s of %s", color.BlueString("v"+version), color.BlueString(orgAndRepo)))
 
 	commitStrs := []string{}
 	for _, commit := range commits {
@@ -140,7 +155,7 @@ func release(cmd *cobra.Command, _ []string) error {
 		commitStrs = append(commitStrs, message)
 	}
 
-	cl, err := handleChangelog(newRelease.ProjectName, newRelease.Version, newRelease.Date, commitStrs, pfmt)
+	cl, err := handleChangelog(newRelease.OrgAndRepo, newRelease.Version, newRelease.Date, commitStrs, pfmt)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
@@ -148,7 +163,29 @@ func release(cmd *cobra.Command, _ []string) error {
 
 	newRelease.Changelog = cl
 
-	tokenFile, _ := cmd.Flags().GetString("tokenFile")
+	releaseDetails := `
+Details:
+%s Organization: %s
+%s Repository: %s
+%s Semver Version:%s
+%s Release Date: %s
+%s Changelog:
+%s
+%s`
+	pfmt.Println(fmt.Sprintf(releaseDetails,
+		color.MagentaString("│"), color.BlueString(newRelease.Organization),
+		color.MagentaString("│"), color.BlueString(newRelease.Repository),
+		color.MagentaString("│"), color.BlueString("v"+newRelease.Version),
+		color.MagentaString("│"), color.BlueString(newRelease.Date),
+		color.MagentaString("│"), color.MagentaString("└────────┐"), newRelease.Changelog))
+	pfmt.Println(color.MagentaString("──────────"))
+	answer := pfmt.Question("Proceed with release? (y/N): ")
+
+	if !strings.EqualFold(answer, "y") {
+		pfmt.Warning("Release aborted by user")
+		return nil
+	}
+
 	err = newRelease.createGithubRelease(tokenFile, binaries...)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
@@ -175,8 +212,8 @@ func getAbbreviatedHash(hash plumbing.Hash) string {
 	return fullHash
 }
 
-// getRepoName retrieves the "project/repo" name from the local .git configuration.
-func getRepoName(repo *git.Repository) (string, error) {
+// getOrgAndRepo retrieves the "project/repo" name from the local .git configuration.
+func getOrgAndRepo(repo *git.Repository) (string, error) {
 	remoteConfig, err := repo.Remote("origin")
 	if err != nil {
 		return "", fmt.Errorf("could not get origin remote: %w", err)
@@ -196,7 +233,7 @@ func getRepoName(repo *git.Repository) (string, error) {
 
 func main() {
 	rootCmd.Flags().StringP("version", "v", "", "The semver version string of the new release; If this is not included release will prompt for it.")
-	rootCmd.Flags().StringP("token_file", "t", "", "github api key file (default is $HOME/.github_token)")
+	rootCmd.Flags().StringP("token_file", "t", "", "Github api key file (default is $HOME/.github_token)")
 	rootCmd.Flags().StringArrayP("binary", "b", []string{}, "binaries to upload")
 	rootCmd.PersistentFlags().StringP("format", "f", "pretty", "output format; accepted values are 'pretty', 'json', 'silent'")
 

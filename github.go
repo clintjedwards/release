@@ -23,23 +23,22 @@ const (
 
 // Release contains information pertaining to a specific github release
 type Release struct {
-	User        string
-	Date        string // date in format: month day, year
-	Changelog   []byte
-	Repository  string // full repository name from config
-	ProjectName string // the project name grabbed from the repository
-	Version     string // semver without the v; ex: 1.0.0
-	VersionFull string // ex: <semver>_<epoch>_<commit>
+	Organization string // The organization without the repository name; ex. clintjedwards
+	Date         string // date in format: month day, year
+	Changelog    []byte
+	OrgAndRepo   string // Organization and repository name; ex. clintjedwards/release
+	Repository   string // The name of the repository only, without the prefixed organization. ex. release
+	Version      string // semver without the v; ex: 1.0.0
 }
 
-// newRelease creates a prepopulated release struct using the config file and other sources
+// newRelease creates a pre-populated release struct using the config file and other sources
 func newRelease(version, repository string) (*Release, error) {
 	_, err := semver.NewVersion(version)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse semver string: %w", err)
 	}
 
-	user, projectName, err := parseGithubURL(repository)
+	org, repo, err := parseGithubURL(repository)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse github URL: %w", err)
 	}
@@ -49,11 +48,11 @@ func newRelease(version, repository string) (*Release, error) {
 	date := fmt.Sprintf(dateFmt, month, day, year)
 
 	return &Release{
-		Date:        date,
-		ProjectName: projectName,
-		Repository:  repository,
-		User:        user,
-		Version:     version,
+		Date:         date,
+		Repository:   repo,
+		OrgAndRepo:   repository,
+		Organization: org,
+		Version:      version,
 	}, nil
 }
 
@@ -77,7 +76,7 @@ func (r *Release) createGithubRelease(tokenFile string, binaryPaths ...string) e
 		Body:    github.String(string(r.Changelog)),
 	}
 
-	createdRelease, _, err := client.Repositories.CreateRelease(context.Background(), r.User, r.ProjectName, release)
+	createdRelease, _, err := client.Repositories.CreateRelease(context.Background(), r.Organization, r.Repository, release)
 	if err != nil {
 		return err
 	}
@@ -108,7 +107,7 @@ func (r *Release) uploadBinary(path string, id int64, c *github.Client) error {
 	}
 	defer f.Close()
 
-	_, _, err = c.Repositories.UploadReleaseAsset(context.Background(), r.User, r.ProjectName, id,
+	_, _, err = c.Repositories.UploadReleaseAsset(context.Background(), r.Organization, r.Repository, id,
 		&github.UploadOptions{Name: filepath.Base(f.Name())}, f)
 	if err != nil {
 		return fmt.Errorf("could not upload binary file: %s; %w", path, err)

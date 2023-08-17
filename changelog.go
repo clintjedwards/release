@@ -19,13 +19,13 @@ const (
 )
 
 // pretext is the placeholder text for the input file
-const pretext = `// New release for {{.Name}} v{{.Version}}
+const pretext = `// New release for {{.OrgAndRepo}} v{{.Version}}
 //
 // All lines starting with '//' will be excluded from final changelog
 //
 // Commits since latest tag:
 {{- range .LastCommits}}
-// * {{ . }}
+// - {{ . }}
 {{- end}}
 //
 // Edit changelog below this comment. An example format has been given:
@@ -105,17 +105,17 @@ func getContentsFromUser(filePath string) ([]byte, error) {
 }
 
 // handleChangelog opens a pre-populated file for editing and returns the final user contents
-func handleChangelog(name, version, date string, commits []string, fmtter polyfmt.Formatter) ([]byte, error) {
+func handleChangelog(orgAndRepo, version, date string, commits []string, fmtter polyfmt.Formatter) ([]byte, error) {
 	fmtter.Print("Creating changelog")
 
 	prefix := "changelog"
 	suffix := "md" // markdown
-	filePath := fmt.Sprintf(filePathFmt, prefix, name, version, suffix)
+	filePath := fmt.Sprintf(filePathFmt, prefix, strings.ReplaceAll(orgAndRepo, "/", "_"), version, suffix)
 
 	// attempt to recover a changelog file
 	_, err := os.Stat(filePath)
 	if err == nil {
-		fmtter.Println(fmt.Sprintf("Recovered previous changelog (%s)", filePath))
+		fmtter.Success(fmt.Sprintf("Recovered previous changelog (%s)", filePath))
 		return getContentsFromUser(filePath)
 	}
 
@@ -127,12 +127,12 @@ func handleChangelog(name, version, date string, commits []string, fmtter polyfm
 
 	tmpl := template.Must(template.New("").Parse(pretext))
 	err = tmpl.Execute(file, struct {
-		Name        string
+		OrgAndRepo  string
 		Version     string
 		Date        string
 		LastCommits []string
 	}{
-		Name:        name,
+		OrgAndRepo:  orgAndRepo,
 		Version:     version,
 		Date:        date,
 		LastCommits: commits,
