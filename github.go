@@ -6,10 +6,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Masterminds/semver"
+	"github.com/clintjedwards/polyfmt/v2"
+	"github.com/go-git/go-git/plumbing/storer"
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-github/github"
 	"github.com/mitchellh/go-homedir"
 	"golang.org/x/oauth2"
@@ -57,10 +63,14 @@ func newRelease(version, repository string) (*Release, error) {
 }
 
 // createGithubRelease cuts a new release, tags the current commit with semver, and uploads the changelog as a description
-func (r *Release) createGithubRelease(tokenFile string, binaryPaths ...string) error {
+func (r *Release) createGithubRelease(pfmt polyfmt.Formatter, tokenFile string, assetPaths ...string) error {
+	pfmt.Print("Creating release")
+
+	pfmt.Print("Retrieving Github token")
 	token, err := getGithubToken(tokenFile)
 	if err != nil {
-		return fmt.Errorf("could not get github token: %w", err)
+		pfmt.Err(fmt.Sprintf("Could not retrieve Github token from file %q; %v", tokenFile, err))
+		return fmt.Errorf("could not get github token from file %q: %w", tokenFile, err)
 	}
 
 	ts := oauth2.StaticTokenSource(
@@ -76,29 +86,38 @@ func (r *Release) createGithubRelease(tokenFile string, binaryPaths ...string) e
 		Body:    github.String(string(r.Changelog)),
 	}
 
+	pfmt.Print("Creating release")
 	createdRelease, _, err := client.Repositories.CreateRelease(context.Background(), r.Organization, r.Repository, release)
 	if err != nil {
+		pfmt.Err(fmt.Sprintf("Could not create release; %v", err))
 		return err
 	}
+	pfmt.Success("Successfully created release!")
 
-	if len(binaryPaths) == 0 {
+	if len(assetPaths) == 0 {
 		return nil
 	}
 
-	for _, bin := range binaryPaths {
-		err = r.uploadBinary(bin, createdRelease.GetID(), client)
+	pfmt.Print("Uploading assets")
+	for _, assetPath := range assetPaths {
+		pfmt.Print(fmt.Sprintf("Uploading asset: %q", assetPath))
+
+		err = r.uploadAsset(assetPath, createdRelease.GetID(), client)
 		if err != nil {
-			return err
+			pfmt.Err(fmt.Sprintf("Could not upload asset %q; %v", assetPath, err))
+			continue
 		}
+
+		pfmt.Success(fmt.Sprintf("Uploaded asset: %q", assetPath))
 	}
 
 	return nil
 }
 
-func (r *Release) uploadBinary(path string, id int64, c *github.Client) error {
+func (r *Release) uploadAsset(path string, id int64, c *github.Client) error {
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		return fmt.Errorf("could not find binary file: %s; %w", path, err)
+		return fmt.Errorf("could not find asset file: %s; %w", path, err)
 	}
 
 	f, err := os.Open(path)
@@ -110,7 +129,7 @@ func (r *Release) uploadBinary(path string, id int64, c *github.Client) error {
 	_, _, err = c.Repositories.UploadReleaseAsset(context.Background(), r.Organization, r.Repository, id,
 		&github.UploadOptions{Name: filepath.Base(f.Name())}, f)
 	if err != nil {
-		return fmt.Errorf("could not upload binary file: %s; %w", path, err)
+		return fmt.Errorf("could not upload asset file: %s; %w", path, err)
 	}
 
 	return nil
@@ -163,4 +182,74 @@ func parseGithubURL(githubURL string) (username, projectName string, err error) 
 	}
 
 	return splitURL[0], splitURL[1], nil
+}
+
+func getCommitsAfterLatestTag(repo *git.Repository) (*plumbing.Reference, []*object.Commit, error) {
+	// Get all the tags
+	tagRefs, err := repo.Tags()
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not retrieve tags: %w", err)
+	}
+
+	// Store all tags in a slice
+	var tags []*plumbing.Reference
+	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
+		if _, err := semver.NewVersion(t.Name().Short()); err == nil {
+			tags = append(tags, t)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not iterate over tags")
+	}
+
+	// If there are no tags, return nil for latestTag and an empty commits list
+	if len(tags) == 0 {
+		return nil, []*object.Commit{}, nil
+	}
+
+	// Sort the tags by SemVer
+	sort.Slice(tags, func(i, j int) bool {
+		v1, _ := semver.NewVersion(tags[i].Name().Short())
+		v2, _ := semver.NewVersion(tags[j].Name().Short())
+		return v1.LessThan(v2)
+	})
+
+	// Get the latest tag
+	latestTag := tags[len(tags)-1]
+
+	// Get all commits
+	cIter, err := repo.Log(&git.LogOptions{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not retrieve commits: %w", err)
+	}
+
+	var commits []*object.Commit
+	found := false
+
+	// Get all commits after the latest tag
+	err = cIter.ForEach(func(c *object.Commit) error {
+		if c.Hash.String() == latestTag.Hash().String() {
+			found = true
+			return storer.ErrStop
+		}
+
+		commits = append(commits, c)
+		return nil
+	})
+
+	if err != nil && err != storer.ErrStop {
+		return nil, nil, fmt.Errorf("error iterating through commits: %w", err)
+	}
+
+	if !found {
+		return nil, nil, fmt.Errorf("latest tag not found in commit history")
+	}
+
+	return latestTag, commits, nil
+}
+
+func getSemverFromTag(ref *plumbing.Reference) string {
+	index := strings.LastIndex(ref.String(), "/")
+	return ref.String()[index+1:]
 }

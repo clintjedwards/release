@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/Masterminds/semver"
 	"github.com/clintjedwards/polyfmt/v2"
@@ -33,7 +36,8 @@ Tool will confirm before pushing any changes.`,
 	},
 	Example: `$ release
 $ release -v 0.0.4
-$ release -v 0.0.2 -b /tmp/some_binary`,
+$ release -v 0.0.2 -a '/tmp/some_binary'
+$ release -a '/tmp/*.glob_of_binaries'`,
 }
 
 func release(cmd *cobra.Command, _ []string) error {
@@ -48,7 +52,7 @@ func release(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		panic(err)
 	}
-	binaries, err := cmd.Flags().GetStringArray("binary")
+	assets, err := cmd.Flags().GetStringArray("asset")
 	if err != nil {
 		panic(err)
 	}
@@ -141,6 +145,19 @@ func release(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Evaluate the assets attached
+	assetResolutions := resolveFilePaths(assets)
+	assetPaths := []string{}
+
+	for assetPath, err := range assetResolutions {
+		if err != nil {
+			pfmt.Err(fmt.Sprintf("Could not find or resolve asset at path %q", assetPath))
+			continue
+		}
+
+		assetPaths = append(assetPaths, assetPath)
+	}
+
 	newRelease, err := newRelease(version, orgAndRepo)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
@@ -163,21 +180,53 @@ func release(cmd *cobra.Command, _ []string) error {
 
 	newRelease.Changelog = cl
 
-	releaseDetails := `
+	funcMap := template.FuncMap{
+		"blue":    color.BlueString,
+		"magenta": color.MagentaString,
+	}
+
+	const releaseDetails = `
 Details:
-%s Organization: %s
-%s Repository: %s
-%s Semver Version:%s
-%s Release Date: %s
-%s Changelog:
-%s
-%s`
-	pfmt.Println(fmt.Sprintf(releaseDetails,
-		color.MagentaString("│"), color.BlueString(newRelease.Organization),
-		color.MagentaString("│"), color.BlueString(newRelease.Repository),
-		color.MagentaString("│"), color.BlueString("v"+newRelease.Version),
-		color.MagentaString("│"), color.BlueString(newRelease.Date),
-		color.MagentaString("│"), color.MagentaString("└────────┐"), newRelease.Changelog))
+{{.Divider | magenta}} Organization: {{.Organization | blue}}
+{{.Divider | magenta}} Repository: {{.Repository | blue}}
+{{.Divider | magenta}} Semver Version: {{.Semver | blue}}
+{{.Divider | magenta}} Release Date: {{.Date | blue}}
+{{- if gt (len .Assets) 0}}
+{{.Divider | magenta}} Assets:
+{{- range .Assets}}
+{{$.Divider | magenta}}  • {{ . | blue}}
+{{- end}}
+{{- end}}
+{{.Divider | magenta}} Changelog:
+{{.ChangelogDivider | magenta}}
+{{.Changelog}}`
+
+	var tpl bytes.Buffer
+	tmpl := template.Must(template.New("").Funcs(funcMap).Parse(releaseDetails))
+	err = tmpl.Execute(&tpl, struct {
+		Divider          string
+		Organization     string
+		Repository       string
+		Semver           string
+		Date             string
+		Assets           []string
+		ChangelogDivider string
+		Changelog        string
+	}{
+		Divider:          "│",
+		Organization:     newRelease.Organization,
+		Repository:       newRelease.Repository,
+		Semver:           "v" + newRelease.Version,
+		Date:             newRelease.Date,
+		Assets:           assetPaths,
+		ChangelogDivider: "└─────┐",
+		Changelog:        string(newRelease.Changelog),
+	})
+	if err != nil {
+		return err
+	}
+
+	pfmt.Println(tpl.String())
 	pfmt.Println(color.MagentaString("──────────"))
 	answer := pfmt.Question("Proceed with release? (y/N): ")
 
@@ -186,7 +235,7 @@ Details:
 		return nil
 	}
 
-	err = newRelease.createGithubRelease(tokenFile, binaries...)
+	err = newRelease.createGithubRelease(pfmt, tokenFile, assetPaths...)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
@@ -212,6 +261,36 @@ func getAbbreviatedHash(hash plumbing.Hash) string {
 	return fullHash
 }
 
+// Takes in user provided file paths and resolves them with Glob support.
+// Also determines if that file exists.
+// Returns the full list of concrete file paths along with if they could be resolved properly.
+func resolveFilePaths(assetPaths []string) map[string]error {
+	concreteAssetPaths := map[string]error{}
+
+	for _, assetPath := range assetPaths {
+		filePaths, err := filepath.Glob(assetPath)
+		if err != nil {
+			concreteAssetPaths[assetPath] = fmt.Errorf("could not resolve assetPath glob: %v", err)
+			continue
+		}
+
+		for _, filePath := range filePaths {
+			concreteAssetPaths[filePath] = nil
+		}
+	}
+
+	return concreteAssetPaths
+}
+
+func fileExists(filename string) bool {
+	// The os.Stat function returns file info. If the file does not exist, an error is returned.
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir() // Ensure it's not a directory, just a file.
+}
+
 // getOrgAndRepo retrieves the "project/repo" name from the local .git configuration.
 func getOrgAndRepo(repo *git.Repository) (string, error) {
 	remoteConfig, err := repo.Remote("origin")
@@ -234,8 +313,10 @@ func getOrgAndRepo(repo *git.Repository) (string, error) {
 func main() {
 	rootCmd.Flags().StringP("version", "v", "", "The semver version string of the new release; If this is not included release will prompt for it.")
 	rootCmd.Flags().StringP("token_file", "t", "", "Github api key file (default is $HOME/.github_token)")
-	rootCmd.Flags().StringArrayP("binary", "b", []string{}, "binaries to upload")
-	rootCmd.PersistentFlags().StringP("format", "f", "pretty", "output format; accepted values are 'pretty', 'json', 'silent'")
+	rootCmd.Flags().StringArrayP("asset", "a", []string{}, "Assets to upload; This is usually the binary of "+
+		"the software or anything else that needs to be attached to the release."+
+		" This flag also supports globbing; make sure to wrap the path in quotes to avoid shell auto-globbing.")
+	rootCmd.PersistentFlags().StringP("format", "f", "pretty", "Output format; accepted values are 'pretty', 'json', 'silent'")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
