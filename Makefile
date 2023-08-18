@@ -25,7 +25,7 @@ APP_NAME = release
 GIT_COMMIT = $(shell git rev-parse --short HEAD)
 # Although go 1.18 has the git info baked into the binary now it still seems like there is no support
 # For including outside variables except this. So keep it for now.
-GO_LDFLAGS = '-X "github.com/clintjedwards/${APP_NAME}/main.appVersion=$(VERSION)"'
+GO_LDFLAGS = '-X "main.appVersion=$(VERSION)"'
 SHELL = /bin/bash
 SEMVER = 0.0.0
 VERSION = ${SEMVER}_${GIT_COMMIT}
