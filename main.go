@@ -51,7 +51,7 @@ func release(cmd *cobra.Command, _ []string) error {
 	}
 
 	// We panic here since the only way these flags can fail is if the code is incorrect.
-	version, err := cmd.Flags().GetString("version")
+	semverVersion, err := cmd.Flags().GetString("semver")
 	if err != nil {
 		panic(err)
 	}
@@ -93,7 +93,7 @@ func release(cmd *cobra.Command, _ []string) error {
 	// We do this by prompting the user for the version, but before doing that taking a best
 	// guess on what it might be if we were able to glean a previous version from the proceeding
 	// command.
-	if !cmd.Flag("version").Changed || version == "" {
+	if !cmd.Flag("semver").Changed || semverVersion == "" {
 		latestVersion := ""
 		possibleNextVersion := ""
 
@@ -128,7 +128,7 @@ func release(cmd *cobra.Command, _ []string) error {
 					continue
 				}
 
-				version = response
+				semverVersion = response
 
 				break
 			}
@@ -136,7 +136,7 @@ func release(cmd *cobra.Command, _ []string) error {
 			// If the user has entered nothing, but we have a default, just
 			// use that default.
 			if response == "" && possibleNextVersion != "" {
-				version = possibleNextVersion
+				semverVersion = possibleNextVersion
 				break
 			}
 
@@ -161,13 +161,13 @@ func release(cmd *cobra.Command, _ []string) error {
 		assetPaths = append(assetPaths, assetPath)
 	}
 
-	newRelease, err := newRelease(version, orgAndRepo)
+	newRelease, err := newRelease(semverVersion, orgAndRepo)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
 	}
 
-	pfmt.Println(fmt.Sprintf("\nReleasing %s of %s", color.BlueString("v"+version), color.BlueString(orgAndRepo)))
+	pfmt.Println(fmt.Sprintf("\nReleasing %s of %s", color.BlueString("v"+semverVersion), color.BlueString(orgAndRepo)))
 
 	commitStrs := []string{}
 	for _, commit := range commits {
