@@ -34,16 +34,16 @@ const pretext = `// New release for {{.OrgAndRepo}} v{{.Version}}
 
 FEATURES:
 
-* **Feature Name**: Description about new feature this release
+* **Feature Name**: Description about new feature this release [<short_commit_hash>]
 
 IMPROVEMENTS:
 
-* **Improvement Name**: Description about new improvement this release
+* **Improvement Name**: Description about new improvement this release [<short_commit_hash>]
 
 BUG FIXES:
 
-* topic: Description of the bug. Example below [bug#]
-* api: Fix Go API using lease revocation via URL instead of body [GH-7777]
+* topic: Description of the bug. Example below [<short_commit_hash>]
+* api: Fix Go API using lease revocation via URL instead of body [<short_commit_hash>]
 `
 
 // getEditorPath attempts to find a suitible editor
