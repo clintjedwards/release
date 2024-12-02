@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,7 +300,6 @@ func fileExists(filename string) bool {
 	return !info.IsDir() // Ensure it's not a directory, just a file.
 }
 
-// getOrgAndRepo retrieves the "project/repo" name from the local .git configuration.
 func getOrgAndRepo(repo *git.Repository) (string, error) {
 	remoteConfig, err := repo.Remote("origin")
 	if err != nil {
@@ -307,15 +307,28 @@ func getOrgAndRepo(repo *git.Repository) (string, error) {
 	}
 
 	// Extract the URL from the remote configuration
-	url := remoteConfig.Config().URLs[0]
+	remoteURL := remoteConfig.Config().URLs[0]
 
-	// Parse the URL to get the "project/repo" format
-	parts := strings.Split(strings.TrimSuffix(url, ".git"), "/")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("unexpected repository format")
+	// Handle both SSH and HTTPS URLs
+	if strings.HasPrefix(remoteURL, "git@") {
+		// SSH format: git@github.com:owner/repo.git
+		parts := strings.Split(strings.TrimSuffix(remoteURL, ".git"), ":")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("unexpected SSH URL format")
+		}
+		return parts[1], nil
+	} else {
+		// HTTPS format: https://github.com/owner/repo.git
+		parsedURL, err := url.Parse(remoteURL)
+		if err != nil {
+			return "", fmt.Errorf("could not parse remote URL: %w", err)
+		}
+		parts := strings.Split(strings.TrimSuffix(parsedURL.Path, ".git"), "/")
+		if len(parts) < 2 {
+			return "", fmt.Errorf("unexpected HTTPS URL format")
+		}
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
 	}
-
-	return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
 }
 
 func humanizeVersion(version string) string {
