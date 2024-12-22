@@ -346,7 +346,7 @@ func main() {
 	rootCmd.Flags().StringArrayP("asset", "a", []string{}, "Assets to upload; This is usually the binary of "+
 		"the software or anything else that needs to be attached to the release."+
 		" This flag also supports globbing; make sure to wrap the path in quotes to avoid shell auto-globbing.")
-	rootCmd.PersistentFlags().StringP("format", "f", "pretty", "Output format; accepted values are 'pretty', 'json', 'silent'")
+	rootCmd.PersistentFlags().StringP("format", "f", "plain", "Output format; accepted values are 'pretty', 'plain', 'json', 'silent'")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
