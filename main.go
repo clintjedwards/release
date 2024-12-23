@@ -60,7 +60,17 @@ func release(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		panic(err)
 	}
-	tokenFile, err := cmd.Flags().GetString("token_file")
+	githubTokenFile, err := cmd.Flags().GetString("github_token_file")
+	if err != nil {
+		panic(err)
+	}
+	useChatGPT, err := cmd.Flags().GetBool("chatgpt")
+	if err != nil {
+		panic(err)
+	}
+
+	// We don't yet have the appropriate functionality for the llm token file yet.
+	_, err = cmd.Flags().GetString("chatgpt_token_file")
 	if err != nil {
 		panic(err)
 	}
@@ -170,13 +180,19 @@ func release(cmd *cobra.Command, _ []string) error {
 
 	pfmt.Println(fmt.Sprintf("\nReleasing %s of %s", color.BlueString("v"+semverVersion), color.BlueString(orgAndRepo)))
 
-	commitStrs := []string{}
+	shortCommitStrs := []string{}
 	for _, commit := range commits {
 		message := fmt.Sprintf("%s: %s", getAbbreviatedHash(plumbing.Hash(commit.Hash)), getShortMessage(commit))
-		commitStrs = append(commitStrs, message)
+		shortCommitStrs = append(shortCommitStrs, message)
 	}
 
-	cl, err := handleChangelog(newRelease.OrgAndRepo, newRelease.Version, newRelease.Date, commitStrs, pfmt)
+	longCommitStrs := []string{}
+	for _, commit := range commits {
+		message := fmt.Sprintf("%s: %s", commit.Hash, commit.Message)
+		longCommitStrs = append(longCommitStrs, message)
+	}
+
+	cl, err := handleChangelog(newRelease.OrgAndRepo, newRelease.Version, newRelease.Date, shortCommitStrs, longCommitStrs, pfmt, useChatGPT)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
@@ -239,7 +255,7 @@ Details:
 		return nil
 	}
 
-	err = newRelease.createGithubRelease(pfmt, tokenFile, assetPaths...)
+	err = newRelease.createGithubRelease(pfmt, githubTokenFile, assetPaths...)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
@@ -342,7 +358,9 @@ func humanizeVersion(version string) string {
 func main() {
 	rootCmd.SetVersionTemplate(humanizeVersion(appVersion))
 	rootCmd.Flags().StringP("semver", "s", "", "The semver version string of the new release; If this is not included release will prompt for it.")
-	rootCmd.Flags().StringP("token_file", "t", "", "Github api key file (default is $HOME/.github_token)")
+	rootCmd.Flags().StringP("github_token_file", "g", "", "Github api key file (default is $HOME/.github_token)")
+	rootCmd.Flags().StringP("chatgpt_token_file", "c", "", "ChatGPT api key file (default is $HOME/.chatgpt_token)")
+	rootCmd.Flags().BoolP("chatgpt", "l", false, "Use ChatGPT to help you write changelogs")
 	rootCmd.Flags().StringArrayP("asset", "a", []string{}, "Assets to upload; This is usually the binary of "+
 		"the software or anything else that needs to be attached to the release."+
 		" This flag also supports globbing; make sure to wrap the path in quotes to avoid shell auto-globbing.")

@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	tokenEnv      string = "GITHUB_TOKEN"
-	tokenFileName string = ".github_token"
-	dateFmt       string = "%s %d, %d"
+	githubTokenEnv      string = "GITHUB_TOKEN"
+	githubTokenFileName string = ".github_token"
+	dateFmt             string = "%s %d, %d"
 )
 
 // Release contains information pertaining to a specific github release
@@ -137,7 +137,7 @@ func (r *Release) uploadAsset(path string, id int64, c *github.Client) error {
 
 // getGithubToken attempts to load a github token and returns an error if none exists
 func getGithubToken(tokenFile string) (token string, err error) {
-	token = os.Getenv(tokenEnv)
+	token = os.Getenv(githubTokenEnv)
 
 	if token != "" {
 		return token, nil
@@ -149,7 +149,7 @@ func getGithubToken(tokenFile string) (token string, err error) {
 			return "", fmt.Errorf("could not get user home dir: %w", err)
 		}
 
-		tokenFile = fmt.Sprintf("%s/%s", home, tokenFileName)
+		tokenFile = fmt.Sprintf("%s/%s", home, githubTokenFileName)
 	}
 
 	rawToken, err := setGithubTokenFromFile(tokenFile)

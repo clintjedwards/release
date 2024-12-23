@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,17 +10,22 @@ import (
 	"text/template"
 
 	"github.com/clintjedwards/polyfmt/v2"
+	"github.com/mitchellh/go-homedir"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
 
 const (
-	editorEnvVar  string = "EDITOR"
-	visualEnvVar  string = "VISUAL"
-	defaultEditor string = "vi"
-	filePathFmt   string = "/tmp/%s_%s_%s.%s" // ex. /tmp/changelog_test_1.0.2
+	editorEnvVar         string = "EDITOR"
+	visualEnvVar         string = "VISUAL"
+	defaultEditor        string = "vi"
+	filePathFmt          string = "/tmp/%s_%s_%s.%s" // ex. /tmp/changelog_test_1.0.2
+	chatGPTTokenEnv      string = "CHATGPT_TOKEN"
+	chatGPTTokenFileName string = ".chatgpt_token"
 )
 
-// pretext is the placeholder text for the input file
-const pretext = `// New release for {{.OrgAndRepo}} v{{.Version}}
+// changelogTemplate is the placeholder text for the input file
+const changelogTemplate = `// New release for {{.OrgAndRepo}} v{{.Version}}
 //
 // All lines starting with '//' will be excluded from final changelog
 //
@@ -104,8 +110,47 @@ func getContentsFromUser(filePath string) ([]byte, error) {
 	return changelog, nil
 }
 
+func getChatGPTToken(tokenFile string) (token string, err error) {
+	token = os.Getenv(chatGPTTokenEnv)
+
+	if token != "" {
+		return token, nil
+	}
+
+	if tokenFile == "" {
+		home, err := homedir.Dir()
+		if err != nil {
+			return "", fmt.Errorf("could not get user home dir: %w", err)
+		}
+
+		tokenFile = fmt.Sprintf("%s/%s", home, chatGPTTokenFileName)
+	}
+
+	rawToken, err := setChatGPTTokenFromFile(tokenFile)
+	if err != nil {
+		return "", err
+	}
+
+	return string(rawToken), nil
+}
+
+func setChatGPTTokenFromFile(filename string) ([]byte, error) {
+	contents, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("could not find chatGPT token: %s; %w", filename, err)
+	}
+	if len(contents) == 0 {
+		return nil, fmt.Errorf("could not load chatGPT token contents empty: %s", filename)
+	}
+
+	token := bytes.TrimSpace(contents)
+	return token, nil
+}
+
 // handleChangelog opens a pre-populated file for editing and returns the final user contents
-func handleChangelog(orgAndRepo, version, date string, commits []string, fmtter polyfmt.Formatter) ([]byte, error) {
+func handleChangelog(orgAndRepo, version, date string, shortCommits []string, longCommits []string,
+	fmtter polyfmt.Formatter, useLLM bool,
+) ([]byte, error) {
 	fmtter.Print("Creating changelog")
 
 	prefix := "changelog"
@@ -125,8 +170,10 @@ func handleChangelog(orgAndRepo, version, date string, commits []string, fmtter 
 		return nil, err
 	}
 
-	tmpl := template.Must(template.New("").Parse(pretext))
-	err = tmpl.Execute(file, struct {
+	var changelogBuffer bytes.Buffer
+
+	tmpl := template.Must(template.New("").Parse(changelogTemplate))
+	err = tmpl.Execute(&changelogBuffer, struct {
 		OrgAndRepo  string
 		Version     string
 		Date        string
@@ -135,8 +182,29 @@ func handleChangelog(orgAndRepo, version, date string, commits []string, fmtter 
 		OrgAndRepo:  orgAndRepo,
 		Version:     version,
 		Date:        date,
-		LastCommits: commits,
+		LastCommits: shortCommits,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	llmtoken, err := getChatGPTToken("")
+	if err != nil {
+		return nil, err
+	}
+
+	output := changelogBuffer.String()
+
+	if useLLM {
+		content, err := generateChangelogWithAI(llmtoken, changelogBuffer.String(), longCommits)
+		if err != nil {
+			return nil, err
+		}
+
+		output = content
+	}
+
+	_, err = file.WriteString(output)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +216,51 @@ func handleChangelog(orgAndRepo, version, date string, commits []string, fmtter 
 
 	fmtter.Print("Waiting for user input")
 	return getContentsFromUser(filePath)
+}
+
+func generateChangelogWithAI(token, template string, commitMessages []string) (string, error) {
+	client := openai.NewClient(option.WithAPIKey(token))
+
+	prompt := "I want you to help me write a changelog. Below I will define the template I want you to follow" +
+		" and I'll pass you the commit messages you should use to change and fill in the template and give me a useable " +
+		" changelog.\n\n" +
+		"```template\n" +
+		template +
+		"```\n\n" +
+		"```commit_messages"
+
+	for _, message := range commitMessages {
+		prompt += message
+	}
+
+	prompt += "```\n\n"
+	prompt += "Some things I'd like you to pay attention to:\n" +
+		"* If there is a PR number for the commit, please put it at the end with a link to it.\n" +
+		"* Don't change the version numbers, repo name, or comments." +
+		"* Only send back the changelog, no extra commentary"
+
+	completion, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage(prompt),
+		}),
+		Model: openai.F(openai.ChatModelGPT4o),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// ChatGPT returns everything with markdown formatting so we remove it.
+	lines := strings.Split(completion.Choices[0].Message.Content, "\n")
+	var cleanedLines []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "```" {
+			cleanedLines = append(cleanedLines, line)
+		}
+	}
+
+	result := strings.Join(cleanedLines, "\n")
+
+	return result, nil
 }
 
 func removeFileComments(data []byte) []byte {
