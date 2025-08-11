@@ -359,8 +359,8 @@ func main() {
 	rootCmd.SetVersionTemplate(humanizeVersion(appVersion))
 	rootCmd.Flags().StringP("semver", "s", "", "The semver version string of the new release; If this is not included release will prompt for it.")
 	rootCmd.Flags().StringP("github_token_file", "g", "", "Github api key file (default is $HOME/.github_token)")
-	rootCmd.Flags().StringP("chatgpt_token_file", "c", "", "ChatGPT api key file (default is $HOME/.chatgpt_token)")
-	rootCmd.Flags().BoolP("chatgpt", "l", false, "Use ChatGPT to help you write changelogs")
+	rootCmd.Flags().StringP("llm_token_file", "t", "", "LLM api key file (default is $HOME/.chatgpt_token)")
+	rootCmd.Flags().StringP("llm", "l", "", "Use an LLM to help you write changelogs")
 	rootCmd.Flags().StringArrayP("asset", "a", []string{}, "Assets to upload; This is usually the binary of "+
 		"the software or anything else that needs to be attached to the release."+
 		" This flag also supports globbing; make sure to wrap the path in quotes to avoid shell auto-globbing.")
