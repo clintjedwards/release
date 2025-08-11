@@ -11,17 +11,18 @@ import (
 
 	"github.com/clintjedwards/polyfmt/v2"
 	"github.com/mitchellh/go-homedir"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/v2"
+	openaioption "github.com/openai/openai-go/v2/option"
+	"google.golang.org/genai"
 )
 
 const (
-	editorEnvVar         string = "EDITOR"
-	visualEnvVar         string = "VISUAL"
-	defaultEditor        string = "vi"
-	filePathFmt          string = "/tmp/%s_%s_%s.%s" // ex. /tmp/changelog_test_1.0.2
-	chatGPTTokenEnv      string = "CHATGPT_TOKEN"
-	chatGPTTokenFileName string = ".chatgpt_token"
+	editorEnvVar     string = "EDITOR"
+	visualEnvVar     string = "VISUAL"
+	defaultEditor    string = "vi"
+	filePathFmt      string = "/tmp/%s_%s_%s.%s" // ex. /tmp/changelog_test_1.0.2
+	llmTokenEnv      string = "LLM_TOKEN"
+	llmTokenFileName string = ".llm_token"
 )
 
 // changelogTemplate is the placeholder text for the input file
@@ -110,8 +111,8 @@ func getContentsFromUser(filePath string) ([]byte, error) {
 	return changelog, nil
 }
 
-func getChatGPTToken(tokenFile string) (token string, err error) {
-	token = os.Getenv(chatGPTTokenEnv)
+func getLLMToken(tokenFile string) (token string, err error) {
+	token = os.Getenv(llmTokenEnv)
 
 	if token != "" {
 		return token, nil
@@ -123,10 +124,10 @@ func getChatGPTToken(tokenFile string) (token string, err error) {
 			return "", fmt.Errorf("could not get user home dir: %w", err)
 		}
 
-		tokenFile = fmt.Sprintf("%s/%s", home, chatGPTTokenFileName)
+		tokenFile = fmt.Sprintf("%s/%s", home, llmTokenFileName)
 	}
 
-	rawToken, err := setChatGPTTokenFromFile(tokenFile)
+	rawToken, err := setLLMTokenFromFile(tokenFile)
 	if err != nil {
 		return "", err
 	}
@@ -134,13 +135,13 @@ func getChatGPTToken(tokenFile string) (token string, err error) {
 	return string(rawToken), nil
 }
 
-func setChatGPTTokenFromFile(filename string) ([]byte, error) {
+func setLLMTokenFromFile(filename string) ([]byte, error) {
 	contents, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("could not find chatGPT token: %s; %w", filename, err)
+		return nil, fmt.Errorf("could not find LLM token: %s; %w", filename, err)
 	}
 	if len(contents) == 0 {
-		return nil, fmt.Errorf("could not load chatGPT token contents empty: %s", filename)
+		return nil, fmt.Errorf("could not load LLM token contents empty: %s", filename)
 	}
 
 	token := bytes.TrimSpace(contents)
@@ -149,7 +150,7 @@ func setChatGPTTokenFromFile(filename string) ([]byte, error) {
 
 // handleChangelog opens a pre-populated file for editing and returns the final user contents
 func handleChangelog(orgAndRepo, version, date string, shortCommits []string, longCommits []string,
-	fmtter polyfmt.Formatter, useLLM bool,
+	fmtter polyfmt.Formatter, useLLM string,
 ) ([]byte, error) {
 	fmtter.Print("Creating changelog")
 
@@ -188,20 +189,33 @@ func handleChangelog(orgAndRepo, version, date string, shortCommits []string, lo
 		return nil, err
 	}
 
-	llmtoken, err := getChatGPTToken("")
+	llmtoken, err := getLLMToken("")
 	if err != nil {
 		return nil, err
 	}
 
 	output := changelogBuffer.String()
 
-	if useLLM {
-		content, err := generateChangelogWithAI(llmtoken, changelogBuffer.String(), longCommits)
+	switch useLLM {
+	case "chatgpt":
+		content, err := generateChangelogWithChatGPTLLM(llmtoken, changelogBuffer.String(), longCommits)
 		if err != nil {
 			return nil, err
 		}
 
 		output = content
+
+	case "gemini":
+		content, err := generateChangelogWithGeminiLLM(llmtoken, changelogBuffer.String(), longCommits)
+		if err != nil {
+			return nil, err
+		}
+
+		output = content
+
+	case "":
+	default:
+		panic("LLM value should be 'chatgpt' or 'gemini'")
 	}
 
 	_, err = file.WriteString(output)
@@ -218,8 +232,8 @@ func handleChangelog(orgAndRepo, version, date string, shortCommits []string, lo
 	return getContentsFromUser(filePath)
 }
 
-func generateChangelogWithAI(token, template string, commitMessages []string) (string, error) {
-	client := openai.NewClient(option.WithAPIKey(token))
+func generateChangelogWithChatGPTLLM(token, template string, commitMessages []string) (string, error) {
+	client := openai.NewClient(openaioption.WithAPIKey(token))
 
 	prompt := "I want you to help me write a changelog. Below I will define the template I want you to follow" +
 		" and I'll pass you the commit messages you should use to change and fill in the template and give me a useable " +
@@ -237,13 +251,14 @@ func generateChangelogWithAI(token, template string, commitMessages []string) (s
 	prompt += "Some things I'd like you to pay attention to:\n" +
 		"* If there is a PR number for the commit, please put it at the end with a link to it.\n" +
 		"* Don't change the version numbers, repo name, or comments." +
-		"* Only send back the changelog, no extra commentary"
+		"* Only send back the changelog, no extra commentary" +
+		"* Make sure the format is consistent throughout"
 
 	completion, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage(prompt),
-		}),
-		Model: openai.F(openai.ChatModelGPT4o),
+		},
+		Model: openai.ChatModelGPT4o,
 	})
 	if err != nil {
 		return "", err
@@ -251,6 +266,53 @@ func generateChangelogWithAI(token, template string, commitMessages []string) (s
 
 	// ChatGPT returns everything with markdown formatting so we remove it.
 	lines := strings.Split(completion.Choices[0].Message.Content, "\n")
+	var cleanedLines []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "```" {
+			cleanedLines = append(cleanedLines, line)
+		}
+	}
+
+	result := strings.Join(cleanedLines, "\n")
+
+	return result, nil
+}
+
+func generateChangelogWithGeminiLLM(token, template string, commitMessages []string) (string, error) {
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:  token,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	prompt := "I want you to help me write a changelog. Below I will define the template I want you to follow" +
+		" and I'll pass you the commit messages you should use to change and fill in the template and give me a useable " +
+		" changelog.\n\n" +
+		"```template\n" +
+		template +
+		"```\n\n" +
+		"```commit_messages"
+
+	for _, message := range commitMessages {
+		prompt += message
+	}
+
+	prompt += "```\n\n"
+	prompt += "Some things I'd like you to pay attention to:\n" +
+		"* If there is a PR number for the commit, please put it at the end with a link to it.\n" +
+		"* Don't change the version numbers, repo name, or comments." +
+		"* Only send back the changelog, no extra commentary" +
+		"* Make sure the format is consistent throughout"
+
+	resp, err := client.Models.GenerateContent(context.Background(), "gemini-2.5-flash", genai.Text(prompt), nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Remove markdown formatting.
+	lines := strings.Split(resp.Text(), "\n")
 	var cleanedLines []string
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "```" {

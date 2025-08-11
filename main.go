@@ -64,13 +64,13 @@ func release(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		panic(err)
 	}
-	useChatGPT, err := cmd.Flags().GetBool("chatgpt")
+	useLLM, err := cmd.Flags().GetString("llm")
 	if err != nil {
 		panic(err)
 	}
 
 	// We don't yet have the appropriate functionality for the llm token file yet.
-	_, err = cmd.Flags().GetString("chatgpt_token_file")
+	_, err = cmd.Flags().GetString("llm_token_file")
 	if err != nil {
 		panic(err)
 	}
@@ -192,7 +192,7 @@ func release(cmd *cobra.Command, _ []string) error {
 		longCommitStrs = append(longCommitStrs, message)
 	}
 
-	cl, err := handleChangelog(newRelease.OrgAndRepo, newRelease.Version, newRelease.Date, shortCommitStrs, longCommitStrs, pfmt, useChatGPT)
+	cl, err := handleChangelog(newRelease.OrgAndRepo, newRelease.Version, newRelease.Date, shortCommitStrs, longCommitStrs, pfmt, useLLM)
 	if err != nil {
 		pfmt.Err(fmt.Sprintf("%v", err))
 		return err
