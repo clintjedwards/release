@@ -1,0 +1,12 @@
+# These settings are sane defaults for actual users.
+# We use the "replace_me" string to detect if the user hasn't set a token and inform them off such.
+debug = false
+output_format = "pretty"
+
+[llm]
+enable = false
+token = "replace_me"
+max_commits= 120
+
+[github]
+token = "replace_me"
