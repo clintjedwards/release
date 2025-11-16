@@ -21,6 +21,22 @@ want a predictable, configurable, and transparent workflow that runs directly in
 
 ---
 
+## Installation
+
+### The easy way
+
+cargo install --git https://github.com/clintjedwards/release
+
+### The slightly less easy way
+
+```bash
+git clone https://github.com/clintjedwards/release
+cd release
+cargo install --path .
+```
+
+This will place the `release` binary in your Cargo `bin` directory (usually `~/.cargo/bin`).
+
 ## Configuration
 
 Release requires _some_ configuration in order to interact with Github and different LLMs.
