@@ -1,17 +1,17 @@
-use crate::err;
-use anyhow::{Context, Result, anyhow, bail};
 use polyfmt::debug;
+use rootcause::option_ext::OptionExt;
+use rootcause::prelude::*;
 
 /// A convenience function for getting the organization name and repo name for a project hosted on Github.
 ///
 /// We parse the URL here because organization/repo combination is really a Github concept not so much a Git concept.
-pub fn get_org_and_repo(repo: &git2::Repository) -> Result<(String, String)> {
-    let remote = repo.find_remote("origin").context(err!(
+pub fn get_org_and_repo(repo: &git2::Repository) -> Result<(String, String), Report> {
+    let remote = repo.find_remote("origin").context(
         "Could not find remote 'origin'; \
-            remote origin required in order to parse organization/repo"
-    ))?;
+            remote origin required in order to parse organization/repo",
+    )?;
 
-    let url = remote.url().context(err!("Remote has no URL"))?;
+    let url = remote.url().ok_or_else(|| report!("Remote has no URL"))?;
     let trimmed = url.trim_end_matches(".git");
 
     // Split on both ':' and '/' so we cover:
@@ -24,13 +24,13 @@ pub fn get_org_and_repo(repo: &git2::Repository) -> Result<(String, String)> {
     let idx = parts
         .iter()
         .position(|s| s.contains("github.com"))
-        .ok_or_else(|| anyhow!(err!("URL '{}' does not look like a GitHub URL", url)))?;
+        .ok_or_else(|| report!("URL '{}' does not look like a GitHub URL", url))?;
 
     if idx + 2 >= parts.len() {
-        return Err(anyhow!(err!(
+        return Err(report!(
             "Could not parse organization and repo name from '{}'",
             url
-        )));
+        ));
     }
 
     let org = parts[idx + 1].to_string();
@@ -168,7 +168,7 @@ fn resolve_from_remote_default(repo: &git2::Repository) -> Option<(String, git2:
 ///
 /// `branch_name` is something like `"refs/heads/main"` or
 /// `"refs/remotes/origin/main"`.
-fn resolve_default_base(repo: &git2::Repository) -> Result<(String, git2::Oid)> {
+fn resolve_default_base(repo: &git2::Repository) -> Result<(String, git2::Oid), Report> {
     if let Some(result) = resolve_from_origin_head(repo) {
         return Ok(result);
     }
@@ -223,7 +223,7 @@ fn resolve_default_base(repo: &git2::Repository) -> Result<(String, git2::Oid)> 
 /// - **A list of commits on the default branch since that tag**
 pub fn get_commits_after_latest_tag<'repo>(
     repo: &'repo git2::Repository,
-) -> Result<(git2::Reference<'repo>, Vec<git2::Commit<'repo>>)> {
+) -> Result<(git2::Reference<'repo>, Vec<git2::Commit<'repo>>), Report> {
     //
     // ---- 1. Collect all SemVer-looking tags ----
     //
@@ -263,12 +263,10 @@ pub fn get_commits_after_latest_tag<'repo>(
     //
     // ---- 2. Peel the tag to the commit it ultimately refers to ----
     //
-    let tag_commit = latest_tag_ref.peel_to_commit().with_context(|| {
-        format!(
-            "could not peel tag {}",
-            latest_tag_ref.name().unwrap_or("?")
-        )
-    })?;
+    let tag_commit = latest_tag_ref.peel_to_commit().context(format!(
+        "could not peel tag {}",
+        latest_tag_ref.name().unwrap_or("?")
+    ))?;
 
     let tag_oid = tag_commit.id();
     debug!("Latest semver tag chosen: {} @ {}", latest_ver, tag_oid);

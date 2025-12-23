@@ -1,75 +1,19 @@
 mod changelog;
 mod conf;
+mod error;
 mod git;
 mod llm;
 
-use crate::DEBUG;
 use crate::cli::conf::{CliConfig, Configuration};
-use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use clap::{Parser, ValueEnum};
 use colored::Colorize;
 use octocrab::Octocrab;
 use polyfmt::{debug, finish, pause, print, println, question, resume, spacer, success, warning};
+use rootcause::prelude::*;
 use serde::{Deserialize, Serialize, de};
-use std::sync::atomic::Ordering;
 use std::{collections::HashMap, fmt::Debug, io::Write, path::PathBuf};
 use strum_macros::{EnumString, VariantNames};
-
-/// Creates a human-readable error message, optionally enriched with file, line, and column info.
-///
-/// This macro is designed to be used with `anyhow::Context` or `anyhow::Result` to provide
-/// contextual error messages throughout the codebase.
-///
-/// # Behavior
-///
-/// - In normal mode: Expands to a simple formatted string, e.g.:
-///   `"Failed to open config file"`
-///
-/// - In debug mode: Appends a dim-colored source location to the end of the message, e.g.:
-///   `"Failed to open config file @ src/config.rs:42:18"`
-///
-/// This makes it easy to toggle between clean, user-friendly errors and developer-oriented
-/// diagnostics without changing your code.
-///
-/// # Usage
-///
-/// ```rust
-/// some_func().context(err!("Failed to open config file"))?;
-/// another_func().with_context(|| err!("Parsing user data"))?;
-/// ```
-///
-/// When debug mode is active, the resulting error chain will include the file and line number
-/// for each `.context(...)` call that failed, similar to a lightweight virtual stack trace.
-///
-/// # Notes
-/// - Accepts string interpolation just like format!: `err!("hello {}", name)`.
-/// - Uses ANSI escape codes for dim text; respects terminal color behavior.
-/// - Reads the global `DEBUG` flag through `$crate::debug_enabled()` at runtime.
-/// - Keeps messages front-loaded and readable (file info always appears at the end).
-/// - https://greptime.com/blogs/2024-05-07-error-rust
-///
-#[macro_export]
-macro_rules! err {
-    ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-
-        if $crate::debug_enabled() {
-            use ::colored::Colorize;
-
-            let location = format!("@ {file}:{line}:{col}", file = file!(), line = line!(), col = column!());
-
-            format!(
-              "{msg} {location}",
-              msg = msg,
-              location = location.dimmed(),
-            )
-
-        } else {
-            msg
-        }
-    }};
-}
 
 const RELEASE_DETAILS_TEMPLATE: &str = r#"
 Final Release Details:
@@ -184,13 +128,13 @@ pub(crate) enum Llm {
 }
 
 impl TryFrom<String> for Llm {
-    type Error = anyhow::Error;
+    type Error = Report;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.to_ascii_lowercase().as_str() {
             "gemini" => Ok(Self::Gemini),
             "openai" => Ok(Self::OpenAI),
-            _ => Err(anyhow!(
+            _ => Err(report!(
                 "Could not parse LLM vendor into any accepted values (got `{value}`)"
             )),
         }
@@ -219,15 +163,17 @@ impl From<Llm> for ::llm::builder::LLMBackend {
 }
 
 impl Cli {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, Report> {
         let args = Args::parse();
 
-        let conf = Cli::resolve_config(&args).context(err!("Could not load configuration"))?;
+        let conf = Cli::resolve_config(&args).context("Could not load configuration")?;
 
         let output_format = polyfmt::Format::from(conf.output_format.clone());
 
+        error::alter_error_formatter(conf.debug);
+
         let fmtter_options = polyfmt::Options {
-            debug: DEBUG.load(Ordering::Relaxed),
+            debug: conf.debug,
             padding: 1,
             ..Default::default()
         };
@@ -236,8 +182,8 @@ impl Cli {
 
         polyfmt::set_global_formatter(fmtter);
 
-        let release = get_release_info(&args.assets, &args.semver)
-            .context(err!("Could not get release info"))?;
+        let release =
+            get_release_info(&args.assets, &args.semver).context("Could not get release info")?;
 
         let cli = Cli {
             args,
@@ -256,10 +202,10 @@ impl Cli {
     ///   3. Command-line flags
     ///
     /// The merged configuration is then used to set process-wide defaults such as the global debug flag.
-    pub fn resolve_config(args: &Args) -> Result<conf::CliConfig> {
+    pub fn resolve_config(args: &Args) -> Result<conf::CliConfig, Report> {
         // Load base configuration from file + env.
         let mut conf = Configuration::<CliConfig>::load(args.config_file_path.clone())
-            .context(err!("Could not parse configuration"))?;
+            .context("Could not parse configuration")?;
 
         if let Some(enable_llm) = args.use_llm {
             conf.llm.enable = enable_llm;
@@ -269,7 +215,7 @@ impl Cli {
             let llm_provider: Llm = llm_provider
                 .clone()
                 .try_into()
-                .context(err!("Could not parse llm provider"))?;
+                .context("Could not parse llm provider")?;
 
             conf.llm.provider = Some(llm_provider);
         }
@@ -283,25 +229,22 @@ impl Cli {
         }
 
         conf.debug = args.debug;
-        if conf.debug {
-            DEBUG.store(true, Ordering::Relaxed);
-        }
 
         Ok(conf)
     }
 
-    pub fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<(), Report> {
         print!("Creating release v{}", &self.args.semver; vec![polyfmt::Format::Spinner]);
 
         (self.release.changelog.0, self.release.changelog.1) = self
             .process_changelog()
-            .context(err!("Could not create changelog"))?;
+            .context("Could not create changelog")?;
 
         print!("Creating release v{}", &self.args.semver; vec![polyfmt::Format::Spinner]);
 
         let release_details = self
             .render_release_details()
-            .context(err!("Could not render release details"))?;
+            .context("Could not render release details")?;
 
         println!("{}", release_details);
         spacer!();
@@ -313,7 +256,7 @@ impl Cli {
         }
 
         self.create_github_release()
-            .context(err!("Could not create release on Github"))?;
+            .context("Could not create release on Github")?;
 
         success!("Release successfully created!");
 
@@ -321,7 +264,7 @@ impl Cli {
     }
 
     /// Opens a pre-populated file for editing and returns the final changelog file path and user contents.
-    pub fn process_changelog(&self) -> Result<(PathBuf, String)> {
+    pub fn process_changelog(&self) -> Result<(PathBuf, String), Report> {
         // First we establish a file name and path. This naming of this file specifically includes the project and the
         // semver so that if the user abandons the changelog editing for any reason we can simply just restore the file on
         // their behalf.
@@ -378,7 +321,7 @@ impl Cli {
 
         let content = if self.conf.llm.enable {
             llm::generate_changelog_with_llm(&self.conf.llm, &content, &self.release)
-                .context(err!("Could not alter changelog using LLM"))?
+                .context("Could not alter changelog using LLM")?
         } else {
             content
         };
@@ -409,10 +352,10 @@ impl Cli {
     }
 }
 
-fn get_release_info(assets: &Vec<PathBuf>, semver: &str) -> Result<Release> {
+fn get_release_info(assets: &Vec<PathBuf>, semver: &str) -> Result<Release, Report> {
     let repo = match git2::Repository::open(".") {
         Ok(repo) => repo,
-        Err(e) => bail!(err!("failed to open local repo: {:#}", e)),
+        Err(e) => bail!("failed to open local repo: {:#}", e),
     };
 
     // Process assets so they have names and paths.
@@ -426,7 +369,7 @@ fn get_release_info(assets: &Vec<PathBuf>, semver: &str) -> Result<Release> {
         let file_name = asset_path
             .file_name()
             .and_then(|s| s.to_str())
-            .context(err!("asset path has no valid UTF-8 file name"))?;
+            .ok_or_else(|| report!("asset path has no valid UTF-8 file name"))?;
 
         parsed_assets.push(Asset {
             name: file_name.to_string(),
@@ -434,7 +377,9 @@ fn get_release_info(assets: &Vec<PathBuf>, semver: &str) -> Result<Release> {
         });
     }
 
-    Release::new(&repo, semver, parsed_assets).context(err!("Could not create release"))
+    let release = Release::new(&repo, semver, parsed_assets).context("Could not create release")?;
+
+    Ok(release)
 }
 
 #[derive(Debug, Clone)]
@@ -474,18 +419,21 @@ pub struct Release {
 }
 
 impl Release {
-    pub fn new(repository: &git2::Repository, version: &str, assets: Vec<Asset>) -> Result<Self> {
-        semver::Version::parse(version).context(err!(
+    pub fn new(
+        repository: &git2::Repository,
+        version: &str,
+        assets: Vec<Asset>,
+    ) -> Result<Self, Report> {
+        semver::Version::parse(version).context(format!(
             "Could not parse version '{}' according to SEMVER syntax",
             version
         ))?;
 
         let (org, repo) = git::get_org_and_repo(repository)
-            .context(err!("Could not get organization and repo from git"))?;
+            .context("Could not get organization and repo from git")?;
 
-        let (_last_tag, commits) = git::get_commits_after_latest_tag(repository).context(err!(
-            "Could not get commits after latest tag while creating new release"
-        ))?;
+        let (_last_tag, commits) = git::get_commits_after_latest_tag(repository)
+            .context("Could not get commits after latest tag while creating new release")?;
 
         let mut short_commits = HashMap::new();
         let mut full_commits = HashMap::new();
@@ -526,12 +474,12 @@ async fn upload_asset(
     repo: &str,
     release_id: u64,
     asset: &Asset,
-) -> Result<()> {
+) -> Result<(), Report> {
     use tokio::fs;
 
     let data = fs::read(&asset.path)
         .await
-        .context(err!("could not read asset from {:#?}", asset.path))?;
+        .context(format!("could not read asset from {:#?}", asset.path))?;
 
     let body = Bytes::from(data);
 
@@ -542,13 +490,16 @@ async fn upload_asset(
         // optionally .label("Some nice label")
         .send()
         .await
-        .context(err!("GitHub upload_asset call failed for {}", asset.name))?;
+        .context(format!(
+            "GitHub upload_asset call failed for {}",
+            asset.name
+        ))?;
 
     Ok(())
 }
 
 impl Cli {
-    pub fn create_github_release(&self) -> Result<()> {
+    pub fn create_github_release(&self) -> Result<(), Report> {
         debug!("Starting Github release");
 
         let tag = format!("v{}", self.release.version);
@@ -564,7 +515,7 @@ impl Cli {
             let client = Octocrab::builder()
                 .personal_token(self.conf.github.token.clone())
                 .build()
-                .context(err!("failed to build GitHub client"))?;
+                .context("failed to build GitHub client")?;
 
             let created_release = client
                 .repos(&self.release.organization, &self.release.repo)
@@ -574,7 +525,7 @@ impl Cli {
                 .body(&self.release.changelog.1)
                 .send()
                 .await
-                .context(err!("failure while attempting to create Github release"))?;
+                .context("failure while attempting to create Github release")?;
 
             success!(
                 "Created new Github release: {}",
@@ -591,25 +542,24 @@ impl Cli {
                     asset,
                 )
                 .await
-                .context(err!(
+                .context(format!(
                     "Could not upload asset {} ({:#?}) to release",
-                    asset.name,
-                    asset.path,
+                    asset.name, asset.path,
                 ))?;
 
                 success!("Successfully uploaded asset '{}'", asset.name);
             }
 
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, Report>(())
         })?;
 
         Ok(())
     }
 
-    fn render_release_details(&self) -> Result<String> {
+    fn render_release_details(&self) -> Result<String, Report> {
         let mut tera = tera::Tera::default();
         tera.add_raw_template("release_details", RELEASE_DETAILS_TEMPLATE)
-            .context(err!("Could not create text template"))?;
+            .context("Could not create text template")?;
 
         let colored_assets: HashMap<String, String> = self
             .release
@@ -649,7 +599,7 @@ impl Cli {
 
         let rendered = tera
             .render("release_details", &context)
-            .context(err!("Could not render text template"))?;
+            .context("Could not render text template")?;
         Ok(rendered)
     }
 }

@@ -1,6 +1,5 @@
-use crate::err;
-use anyhow::{Context, Result, anyhow, bail};
 use polyfmt::debug;
+use rootcause::prelude::*;
 use std::{env, path::PathBuf, str};
 
 /// EDITOR is an environment variable that usually points to the default editor path for the current user.
@@ -17,7 +16,7 @@ const DEFAULT_EDITOR: &str = "vi";
 pub(crate) static CHANGELOG_TEMPLATE: &str = include_str!("../../changelog_template.md");
 
 // Return a suitable editor path and arguments.
-fn get_editor_path() -> Result<String> {
+fn get_editor_path() -> Result<String, Report> {
     // First we try VISUAL
     if let Ok(val) = env::var(VISUAL_ENV_VAR)
         && !val.is_empty()
@@ -43,7 +42,7 @@ fn get_editor_path() -> Result<String> {
     )
 }
 
-fn open_file_in_editor(file_path: &str) -> Result<()> {
+fn open_file_in_editor(file_path: &str) -> Result<(), Report> {
     let editor_path = get_editor_path()?;
 
     // Split the path parsed into parts so we can manipulate and add into Command func
@@ -64,7 +63,7 @@ fn open_file_in_editor(file_path: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn get_contents_from_user(file_path: &str) -> Result<(PathBuf, String)> {
+pub(crate) fn get_contents_from_user(file_path: &str) -> Result<(PathBuf, String), Report> {
     open_file_in_editor(file_path)?;
 
     let content = std::fs::read_to_string(file_path)?;
@@ -79,10 +78,10 @@ pub(crate) fn get_contents_from_user(file_path: &str) -> Result<(PathBuf, String
     let ext = final_file_path
         .extension()
         .and_then(|e| e.to_str())
-        .ok_or(anyhow!(
-            "Expected extension '.md' not found for changlog file"
+        .ok_or(report!(
+            "Expected extension '.md' not found for changelog file"
         ))
-        .context(err!("Could not write final changelog file"))?;
+        .context("Could not write final changelog file")?;
 
     final_file_path.set_file_name(format!("{stem}_final.{ext}"));
 
