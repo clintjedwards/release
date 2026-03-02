@@ -221,9 +221,40 @@ fn resolve_default_base(repo: &git2::Repository) -> Result<(String, git2::Oid), 
 ///
 /// - **The reference for the latest SemVer tag**
 /// - **A list of commits on the default branch since that tag**
+fn collect_all_commits_from_head<'repo>(
+    repo: &'repo git2::Repository,
+) -> Result<(Option<git2::Reference<'repo>>, Vec<git2::Commit<'repo>>), Report> {
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok((None, Vec::new())),
+    };
+
+    let base_oid = match head.target() {
+        Some(oid) => oid,
+        None => return Ok((None, Vec::new())),
+    };
+
+    let mut revwalk = repo.revwalk().context("could not create revwalk")?;
+    revwalk
+        .set_sorting(git2::Sort::TIME)
+        .context("could not set revwalk sorting")?;
+    revwalk.push(base_oid).context("could not push base OID")?;
+
+    let mut commits = Vec::new();
+    for oid_res in revwalk {
+        let oid = oid_res.context("error iterating through commits")?;
+        let commit = repo
+            .find_commit(oid)
+            .context("could not look up commit during revwalk")?;
+        commits.push(commit);
+    }
+
+    Ok((None, commits))
+}
+
 pub fn get_commits_after_latest_tag<'repo>(
     repo: &'repo git2::Repository,
-) -> Result<(git2::Reference<'repo>, Vec<git2::Commit<'repo>>), Report> {
+) -> Result<(Option<git2::Reference<'repo>>, Vec<git2::Commit<'repo>>), Report> {
     //
     // ---- 1. Collect all SemVer-looking tags ----
     //
@@ -257,7 +288,7 @@ pub fn get_commits_after_latest_tag<'repo>(
     // No SemVer tags found → cannot compute compare range
     let Some((latest_ver, latest_tag_ref)) = tags.into_iter().max_by(|(a, _), (b, _)| a.cmp(b))
     else {
-        bail!("no semver tags found");
+        return collect_all_commits_from_head(repo);
     };
 
     //
@@ -324,7 +355,7 @@ pub fn get_commits_after_latest_tag<'repo>(
         latest_ver
     );
 
-    Ok((latest_tag_ref, commits))
+    Ok((Some(latest_tag_ref), commits))
 }
 
 pub fn get_short_message(commit: &git2::Commit) -> String {
@@ -485,7 +516,7 @@ mod tests {
         // New API: GitHub-style compare <latest tag>...<default branch>
         let (latest_tag_ref, commits_after) = get_commits_after_latest_tag(&repo).unwrap();
 
-        assert_eq!(latest_tag_ref.shorthand(), Some("1.1.0"));
+        assert_eq!(latest_tag_ref.as_ref().and_then(|r| r.shorthand()), Some("1.1.0"));
 
         // We only created one commit after 1.1.0, so we expect exactly that one.
         assert_eq!(commits_after.len(), 1);
@@ -493,22 +524,24 @@ mod tests {
     }
 
     #[test]
-    fn errors_when_no_tags() {
+    fn returns_all_commits_when_no_tags() {
         let repo = init_repo("no_tags");
 
-        // A couple of commits but *no tags*
         let _c1 = commit_file(&repo, "file.txt", "one", "commit 1");
         let _c2 = commit_file(&repo, "file.txt", "two", "commit 2");
 
-        // New API returns an error when no SemVer tags are present
-        let res = get_commits_after_latest_tag(&repo);
+        let (tag_ref, commits) = get_commits_after_latest_tag(&repo).unwrap();
+        assert!(tag_ref.is_none());
+        assert_eq!(commits.len(), 2);
+    }
 
-        assert!(res.is_err());
-        let msg = res.err().unwrap().to_string();
-        assert!(
-            msg.contains("no semver tags found"),
-            "unexpected error message: {msg}"
-        );
+    #[test]
+    fn returns_empty_commits_for_empty_repo() {
+        let repo = init_repo("empty_repo");
+
+        let (tag_ref, commits) = get_commits_after_latest_tag(&repo).unwrap();
+        assert!(tag_ref.is_none());
+        assert!(commits.is_empty());
     }
 
     #[test]
